@@ -1,0 +1,402 @@
+---
+title: "Internet Gambiling Activities Report"
+author: "Ashval Vaidya, Jea Verayo, Yashwanth Thonukunuru"
+date: "2022-12-20"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# Import data to R
+load("C:/Users/ythonukunuru//OneDrive - IESEG/R Group Project/BWIN Dashboard/DataMart_BaseTable.RData")
+```
+
+```{r}
+library(haven)
+library(anytime)
+library(readxl)
+library(dplyr)
+library(tidyr)
+library(lubridate)
+library(purrr)
+library(data.table)
+library(shiny)
+library(dplyr)
+library(plotly)
+library(leaflet)
+library(maps)
+library(magrittr)
+library(rvest)
+library(DT)
+library(shinydashboard)
+library(ggplot2)
+library(ggpubr)
+library(scales)
+library(rmarkdown)
+library(knitr)
+library(formattable)
+library(kableExtra)
+library(stringr) 
+```
+## **Introduction**
+This report is based upon internet gambling research project carried by Division on Addictions (DOA) in collaboration with bwin Interactive Entertainment, AG (bwin), an Internet betting service provider headquartered in Vienna, Austria. Internet sports betting behavior was studied from February 1, 2005 through September 30, 2005. Data from this research has been used to gather useful insights to benefit marketing teams to understand customers base, their behavior, product performance, monthly metrics and other important KPIs.
+
+## **User Demographics**
+This section summarizes the distribution of users by gender, country, language, and betting application.
+
+### **User Country**
+Research has been carried out on around 40,000 customers worldwide who had registered themselves in between February 1, 2005 and February 28, 2005. It has been observed that majority of the customers are from Germany with 22,972 customers and there are 19 countries with only 1 customer registered. Below depicts the details of top 3 and bottom 3 countries
+
+```{r}
+# Count the number of customers from each country
+country_sums <- consolidated_datamart_df %>%
+                    group_by(Country) %>%
+                    summarize(Count = n())
+
+# Find the top 3 countries by number of customers
+top_3 <- country_sums %>%
+            slice_max(Count, n = 3)
+
+# Find the bottom 3 countries by number of customers
+bottom_3 <- country_sums %>%
+              slice_min(Count, n = 3)
+
+# Create a new data frame with just the top 3 and bottom 3 countries
+top_and_bottom_3 <- rbind(top_3, bottom_3)
+```
+
+```{r}
+knitr::kable(top_and_bottom_3)
+```
+
+```{r map, echo = FALSE, warning = FALSE, message=FALSE}
+
+#Get the latitude and longitude per country
+country_report <-read.csv("C:/Users/ythonukunuru//OneDrive - IESEG/R Group Project/BWIN Dashboard/country_data.csv", stringsAsFactors=FALSE)
+colnames(country_report)[colnames(country_report) == "country"] <- "Country"
+consolidated_datamart_df <- left_join(consolidated_datamart_df, country_report, by='Country')
+
+country <- consolidated_datamart_df %>%
+              filter(!is.na(latitude)) %>%
+              group_by(Country) %>%
+              summarize(Count=n(), latitude, longitude) %>%
+              distinct(Country, Count, latitude, longitude)
+
+#Initialize map using leaflet
+map <- leaflet(data=country) %>% 
+  addTiles(options = providerTileOptions(minZoom = 1.5, maxZoom = 5)) %>%
+  addCircleMarkers(lng = ~longitude, lat = ~latitude,
+                   popup = paste(country$Country, ": ", country$Count),
+                   clusterOptions = markerClusterOptions())
+map
+
+```
+
+### **Users Gender and Languages Spoken**
+Data shows that majority of the customers attracted to internet gambling activities are male. And because Germany comprises more than half of the total base, it follows that German is the top primary language of these players. 
+
+```{r}
+
+gender <- consolidated_datamart_df %>%
+  group_by(Gender) %>%
+  filter(!is.na(Gender)) %>%
+  summarize(Count=n()) %>%
+  mutate(Percent = formattable::percent(Count / sum(Count))) %>%
+  arrange(desc(Count))
+
+# Group the data by language and count the number of customers in each group
+language_data <- consolidated_datamart_df %>%
+                    group_by(Language) %>%
+                    summarize(Count = n())
+
+# Bar chart with the number of customers per language
+ggplot(language_data, aes(x = Language, y = Count)) +
+  geom_col() +
+  labs(title = "Customers per language", x = "Languages spoken by customers", y = "Number of   customers") +
+      theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) 
+```
+
+```{r}
+kable(gender)
+```
+
+### **Users per Age Group**
+Customers aged below 39 years are groups as 'Young Adults', those between 40 and 59 years are categorized as 'Middle-aged Adults' and customers older than 59 years are under 'Old Adults' age group. Internet gambling sports has been famous among young adults and male customers dominate all the age groups. 
+
+```{r application, echo = FALSE}
+# Group the data by age group and count the number of customers in each group
+Customers_AgeGroup_data <- consolidated_datamart_df %>%
+                              select(Gender,age_group) %>%
+                              filter(!is.na(Gender),!is.na(age_group)) %>%
+                              group_by(age_group,Gender) %>%
+                              summarize(Count = n())
+
+# Chart with the number of customers per age group with gender composition 
+ggplot(Customers_AgeGroup_data, aes(x = age_group, y = Count, fill = Gender)) +
+  geom_bar(stat = "identity") +
+  labs(title = "Customers per age group", x = "Age Group", y = "Number of customers") 
+```
+### **Preferred Betting Application**
+"BETANDWIN" is the most preferred betting site, with 86% of the customers using this application.
+
+```{r application, echo = FALSE}
+
+application <- consolidated_datamart_df %>%
+  group_by(Application) %>%
+  summarize(Count=n()) %>%
+  mutate(Percent = formattable::percent(Count / sum(Count))) %>%
+  arrange(desc(Count))
+
+kable(head(application))
+```
+
+## **Time series analysis of user activity**
+
+### **Users activity patterns**
+From below graph we can understand the activity patterns of users over time from the moment they first registered on the platform,
+
+```{r}
+# group the data by registration date and calculate the average number of days active per user
+TimeSeriesRegDate <- consolidated_datamart_df %>%
+                        select(Betting_Avg_Days_Active,RegDate) %>%
+                        mutate(week = week(RegDate)) %>%
+                        group_by(RegDate)
+
+# Use ggplot2 to create a line chart with the average number of days active per user over time
+ggplot(TimeSeriesRegDate, aes(x = RegDate, y = Betting_Avg_Days_Active,color = week)) +
+  geom_point() +
+  labs(title = "Average days active against registration date", 
+       x = "Registration Date", 
+       y = "Average days active(betting)") +
+  scale_x_date(date_breaks = "1 week", date_labels = "%b %d")
+```
+
+### **Product Performance in each month**
+Initially, it has been discerned that product "Sports book fixed-odd" has least popularity among the available products, this product is rarely used by customers. So, we are not including this product in product performance analysis over 8 months of time period. 
+
+Product "Casino Chartwell" had generated majority of bets throughout the duration, but along with other products bets were decreased from the month of April. 
+
+```{r}
+# Create subset of product wise metrics for total bets
+    basetable_prod_bets_selected <- consolidated_datamart_df %>%
+      select(UserID,ends_with("_Total_Bets"),Betting_Date_First_Played) %>%
+      mutate(Month_name = format(Betting_Date_First_Played, "%B"))
+    
+    # Create subset of product wise metrics for total bets
+    prod_selected_bets_long <- basetable_prod_bets_selected %>%  
+      pivot_longer(cols = P2_Total_Bets:P8_Total_Bets,
+                   names_to = "Product", 
+                   values_to = "Total_Bets")
+    
+    # Renaming values of 'Product' column in above data frame
+    prod_selected_bets_long <- prod_selected_bets_long %>%
+      filter(!is.na(Total_Bets)) %>%
+      mutate(Product = recode(Product, P2_Total_Bets = 'Sports book live-action',
+                              P3_Total_Bets = 'Poker BossMedia',
+                              P4_Total_Bets = "Casino BossMedia",
+                              P5_Total_Bets = "Supertoto",
+                              P6_Total_Bets = "Games VS",
+                              P7_Total_Bets = "Games bwin",
+                              P8_Total_Bets = "Casino Chartwell"))
+    
+  
+  # Plot total stakes per product
+    ggplot(prod_selected_bets_long, aes(x = Month_name, y = Total_Bets, 
+                                        fill = Product,color = Product)) +
+      geom_col() + 
+      labs(title = "Month wise total bets pattern",
+           x = "Month",
+           y = "Total Bets")  + 
+      theme(legend.position = "right") +
+      scale_x_discrete(limits = c("February", "March", "April", "May", "June",
+                                  "July", "August", "September")) +
+      scale_y_continuous(labels = function(x) paste0(x / 1000000, "M"))
+  
+```
+In terms of stakes, products "Casino Chartwell" and "Sports book live-action" equally well in the month of February. Also, total stakes were reduced significantly from the month of March.
+
+```{r}
+# Create subset of product wise metrics for total stakes
+    basetable_prod_stakes_selected <- consolidated_datamart_df %>%
+      select(UserID,ends_with("_Total_Stakes"),Betting_Date_First_Played) %>%
+      mutate(Month_name = format(Betting_Date_First_Played, "%B"))
+    
+    # Create subset of product wise metrics for total bets
+    prod_selected_stakes_long <- basetable_prod_stakes_selected %>%  
+      pivot_longer(cols = P2_Total_Stakes:P8_Total_Stakes,
+                   names_to = "Product", 
+                   values_to = "Total_Stakes")
+    
+    # Renaming values of 'Product' column in above data frame
+    prod_selected_stakes_long <- prod_selected_stakes_long %>%
+      filter(!is.na(Total_Stakes)) %>%
+      mutate(Product = recode(Product, P2_Total_Stakes = 'Sports book live-action',
+                              P3_Total_Stakes = 'Poker BossMedia',
+                              P4_Total_Stakes = "Casino BossMedia",
+                              P5_Total_Stakes = "Supertoto",
+                              P6_Total_Stakes = "Games VS",
+                              P7_Total_Stakes = "Games bwin",
+                              P8_Total_Stakes = "Casino Chartwell"))
+    
+  
+  # Plot total stakes per product
+    ggplot(prod_selected_stakes_long, aes(x = Month_name, y = Total_Stakes, 
+                                        fill = Product,color = Product)) +
+      geom_col() + 
+      labs(title = "Month wise total stakes pattern",
+           x = "Month",
+           y = "Total Stakes")  + 
+      theme(legend.position = "right") +
+      scale_x_discrete(limits = c("February", "March", "April", "May", "June",
+                                  "July", "August", "September")) +
+      scale_y_continuous(labels = function(x) paste0(x / 1000000, "M"))
+```
+
+## **Revenue generated by each product**
+Unanticipated internet gambling activity organization had encountered losses from the very first month. Product "Sports book live-action" contributed negatively to net revenue, losses continued until the month of April. Although there is no loss from May, Total bets and total stakes are very less from March, so this didn't help in generating significant net revenue.  
+
+```{r}
+# Create subset of product wise metrics for net revenue
+basetable_prod_revenue_selected <- consolidated_datamart_df %>%
+                    select(UserID,ends_with("_Net_Revenue"),Betting_Date_First_Played) %>%
+                    mutate(Month_name = format(Betting_Date_First_Played, "%B"))
+    
+    # Create subset of product wise metrics for net revenue
+    prod_selected_revenue_long <- basetable_prod_revenue_selected %>%  
+      pivot_longer(cols = P2_Net_Revenue:P8_Net_Revenue,
+                   names_to = "Product", 
+                   values_to = "Net_Revenue")
+    
+    # Renaming values of 'Product' column in above data frame
+    prod_selected_revenue_long <- prod_selected_revenue_long %>%
+      filter(!is.na(Net_Revenue)) %>%
+      mutate(Product = recode(Product, P2_Net_Revenue = 'Sports book live-action',
+                              P3_Net_Revenue = 'Poker BossMedia',
+                              P4_Net_Revenue = "Casino BossMedia",
+                              P5_Net_Revenue = "Supertoto",
+                              P6_Net_Revenue = "Games VS",
+                              P7_Net_Revenue = "Games bwin",
+                              P8_Net_Revenue = "Casino Chartwell"))
+    
+  
+  # Plot total stakes per product
+    ggplot(prod_selected_revenue_long, aes(x = Month_name, y = Net_Revenue, 
+                                        fill = Product,color = Product)) +
+      geom_col() + 
+      labs(title = "Net Revenue per each month",
+           x = "Month",
+           y = "Net Revenue")  + 
+      theme(legend.position = "right") +
+      scale_x_discrete(limits = c("February", "March", "April", "May", "June",
+                                  "July", "August", "September")) +
+      scale_y_continuous(labels = function(x) paste0(x / 1000000, "M"))
+```
+
+## **Poker Analysis**
+This section summarizes the distribution of users by gender, country, language, and betting application.
+
+### **Poker Transaction details on monthly basis**
+Poker data shows that maximum user activity were recorded in the month of March with over 35000 times poker chips were bought and sold followed by the month of April and September with approximately 25000 transactions.
+
+```{r}
+nbr_pokerTrans_monthly <- consolidated_datamart_df %>%
+      select(February_Nbr_PokerTrans:Oct_Nbr_PokerTrans)
+
+ 
+
+
+    #replace NA values to 0
+    index <- is.na(nbr_pokerTrans_monthly)
+    nbr_pokerTrans_monthly[index] <- 0
+
+ 
+
+    #finding the sum of number of transaction for each month.
+    nbr_pokerTrans_monthly <- colSums(nbr_pokerTrans_monthly)
+    nbr_pokerTrans_monthly <- data.frame(nbr_pokerTrans_monthly)
+
+ 
+
+    #converting rownames to columns
+    nbr_pokerTrans_monthly$months <- row.names(nbr_pokerTrans_monthly)
+
+ 
+
+    #changing months
+    nbr_pokerTrans_monthly$months<-str_replace_all(nbr_pokerTrans_monthly$months,"_Nbr_PokerTrans","")
+
+    ggplot(nbr_pokerTrans_monthly, aes(x=months,y=nbr_pokerTrans_monthly)) + geom_bar(stat = "identity")+
+      ggtitle("Number of Poker Chip Transactions per Month") +
+        xlab("Months") +
+        ylab("Total No of Poker Chips") +
+      scale_x_discrete(limits = c("February", "March", "April", "May", "June",
+                                  "July", "August", "Sept","Oct"))
+
+
+
+
+```
+### **Monthly analysis of Average user activity towards poker chip purchase**
+Highest Average Sales of Poker Chips were recorded in the month of April and August. 
+September recorded the lowest figures.
+```{r}
+avg_pokerBuy_monthly <- consolidated_datamart_df %>%
+      select(February_AvgPokerBuy:Oct_AvgPokerBuy)
+
+    #replace NA values to 0
+    index <- is.na(avg_pokerBuy_monthly)
+    avg_pokerBuy_monthly[index] <- 0
+
+    #finding the sum of number of transaction for each month.
+    avg_pokerBuy_monthly <- colSums(avg_pokerBuy_monthly)
+    avg_pokerBuy_monthly <- data.frame(avg_pokerBuy_monthly)
+
+    #converting rownames to columns
+    avg_pokerBuy_monthly$months <- row.names(avg_pokerBuy_monthly)
+
+    #changing months
+    avg_pokerBuy_monthly$months<-str_replace_all(avg_pokerBuy_monthly$months,"_AvgPokerBuy","")
+
+
+    ggplot(avg_pokerBuy_monthly, aes(x = "", y = avg_pokerBuy_monthly, fill = months)) +
+        geom_bar(stat = "identity",) +
+        coord_polar("y", start = 0)+
+        labs(title = "Average Amount of Poker Chip Purchase per Month")+
+      theme(axis.title.x = element_blank())
+    
+```
+### **Monthly analysis of Average user activity towards poker chip purchase**
+In the Month of August, Maximum of Average Poker Chips were sold to encash the money by users followed by September,
+while October recorded the lowest figures.
+
+```{r}
+avg_pokerSold_monthly <- consolidated_datamart_df %>%
+      select(February_AvgPokerSell:Oct_AvgPokerSell)
+
+    #replace NA values to 0
+    index <- is.na(avg_pokerSold_monthly)
+    avg_pokerSold_monthly[index] <- 0
+
+    #finding the sum of number of transaction for each month.
+    avg_pokerSold_monthly <- colSums(avg_pokerSold_monthly)
+    avg_pokerSold_monthly <- data.frame(avg_pokerSold_monthly)
+
+    #converting rownames to columns
+    avg_pokerSold_monthly$months <- row.names(avg_pokerSold_monthly)
+
+    #changing months
+    avg_pokerSold_monthly$months<-str_replace_all(avg_pokerSold_monthly$months,"_AvgPokerSell","")
+
+    ggplot(avg_pokerSold_monthly, aes(x = months, y = avg_pokerSold_monthly)) +
+        geom_point()+
+        ggtitle("Average Amount of Poker Chip Purchase per Month ") +
+        xlab("Months") +
+        ylab("Average Poker Sell Amount")+
+      scale_x_discrete(limits = c("February", "March", "April", "May", "June",
+                                  "July", "August", "Sept","Oct"))
+
+```
+      
